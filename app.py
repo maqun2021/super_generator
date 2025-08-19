@@ -510,18 +510,58 @@ def infer_payment_fields(row):
             'payment_charges': ""
         }
 
+def fix_multiline_csv(df):
+    """修复包含多行字段的CSV数据"""
+    clean_data = []
+    current_record = None
+    skip_count = 0  # 跳过前两行样例数据
+    
+    for index, row in df.iterrows():
+        row_data = [str(cell) if pd.notna(cell) else '' for cell in row]
+        party_b_name = row_data[0].strip()
+        
+        if party_b_name and party_b_name.lower() != 'nan' and party_b_name != '':
+            # 跳过前两行样例数据
+            if skip_count < 2:
+                skip_count += 1
+                continue
+                
+            # 保存上一条完整记录
+            if current_record is not None:
+                clean_data.append(current_record)
+            # 开始新记录
+            current_record = row_data.copy()
+        else:
+            # 这是续行，合并到当前记录
+            if current_record is not None:
+                for i, cell in enumerate(row_data):
+                    if cell.strip() and cell.lower() != 'nan':
+                        if i < len(current_record):
+                            if current_record[i].strip():
+                                current_record[i] += '\n' + cell
+                            else:
+                                current_record[i] = cell
+    
+    # 添加最后一条记录
+    if current_record is not None:
+        clean_data.append(current_record)
+    
+    # 创建新的DataFrame
+    clean_df = pd.DataFrame(clean_data, columns=df.columns)
+    clean_df.columns = clean_df.columns.str.strip()
+    st.success(f"✅ CSV修复完成：跳过2行样例数据，找到 {len(clean_df)} 条有效记录")
+    return clean_df
+
 def process_data(df, uploaded_template, generate_contracts, generate_summaries, output_mode):
     today = date.today().isoformat()
     zip_buffer = io.BytesIO()
     summaries = []
     contract_files = []
-    last_valid_index = df['Party B Name'].apply(lambda x: str(x).strip() != '').to_numpy().nonzero()[0]
-    if len(last_valid_index) > 0:
-        last_valid_index = last_valid_index[-1]
-    else:
-        last_valid_index = -1
+    
+    # 修复多行CSV数据
+    df = fix_multiline_csv(df)
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED) as zip_file:
-        for index, row in df.iloc[2:last_valid_index+1].iterrows():
+        for index, row in df.iterrows():
             name_value = row['Party B Name'] if 'Party B Name' in row else ''
             if str(name_value).strip() == "":
                 continue
