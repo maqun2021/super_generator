@@ -81,6 +81,21 @@ st.markdown("<div class='subtitle'>Generate Contracts + Summaries in Perfect Pai
 st.markdown("---")
 
 # 定义函数
+def calculate_per_month_videos(video_number_str):
+    """双月合作时转换为每月规范格式"""
+    try:
+        if '-' in video_number_str:
+            min_videos, max_videos = video_number_str.split('-')
+            max_total = int(max_videos.strip())
+            max_per_month = max_total // 2
+            return f"1~{max_per_month} video(s) per month"
+        else:
+            total_videos = int(video_number_str)
+            max_per_month = total_videos // 2
+            return f"1~{max_per_month} video(s) per month"
+    except:
+        return f"{video_number_str} (split per month)"
+
 def validate_form_data(data):
     """验证表单数据"""
     errors = []
@@ -113,6 +128,13 @@ def validate_form_data(data):
     if data.get('start_date') and data.get('end_date'):
         if data['start_date'] > data['end_date']:
             errors.append("开始日期不能晚于结束日期")
+        
+        # 新增：检查是否超过两个月
+        start_dt = data['start_date']
+        end_dt = data['end_date']
+        months_diff = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month)
+        if months_diff > 1:
+            errors.append("合作期间不能超过两个月")
     
     # 实际上线视频数量验证（当状态为已履行完毕时）
     if data.get('statement') == "已履行完毕":
@@ -231,13 +253,21 @@ if input_mode == "📝 表单填写（推荐）":
         col1, col2, col3 = st.columns(3)
         with col1:
             video_rate = st.number_input("单支视频金额 ($) *", min_value=0.0, value=10.0, key="video_rate_input")
-            estimated_videos = st.text_input("预计视频数量 *", key="estimated_videos_input", placeholder="如：10-15")
+            estimated_videos = st.text_input(
+                "预计视频数量 *", 
+                key="estimated_videos_input", 
+                placeholder="2-40（推荐）",
+                help="单月最多30个视频，双月最多60个视频。双月合作时会自动分配每月的视频数量。"
+            )
         with col2:
             start_date = st.date_input("开始日期 *", value=date.today(), key="start_date_input")
             end_date = st.date_input("结束日期", value=None, key="end_date_input")
         with col3:
             payment_method = st.selectbox("支付方式 *", ["bank", "paypal"], key="payment_method_select")
             bonus_level = st.selectbox("奖励等级", ["none", "lower", "higher"], key="bonus_level_select")
+        
+        # 添加视频数量规范提示
+        st.info("💡 **视频数量规范**：单月合作最多30个视频，双月合作最多60个视频（推荐2-40）。签约数量不得大于资源库提审数量。")
         
         # 其他信息
         st.markdown("#### 📄 其他信息")
@@ -294,7 +324,6 @@ if input_mode == "📝 表单填写（推荐）":
                         'actual_video_number': actual_video_number,
                         'payment_info': payment_info
                     })
-                    
                     st.session_state.form_records.append(record)
                     st.success(f"✅ 已添加记录：{party_b_name}")
                     st.rerun()
@@ -442,22 +471,45 @@ def infer_platform_fields(row):
 def infer_date_versions(row):
     start = row.get('Start date', '')
     end = row.get('end date', '')
+    video_number = str(row.get('Estimated Videos', '')).strip()
+    
     try:
         start_dt = datetime.strptime(start, '%Y-%m-%d')
-        if end and str(end).strip():  # 检查end date是否为空
+        
+        if end and str(end).strip():  # 有结束日期
             end_dt = datetime.strptime(end, '%Y-%m-%d')
-            if start_dt.year == end_dt.year and start_dt.month == end_dt.month:
+            months_diff = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month)
+            
+            if months_diff == 0:  # 单月合作
                 english = f"{calendar.month_name[start_dt.month]} {start_dt.year}"
-            else:
+                timeline = f"Post {video_number} video(s) in {english}"
+                video_description = f"{video_number} video(s)"
+                
+            elif months_diff == 1:  # 双月合作
+                english = f"{calendar.month_name[start_dt.month]} and {calendar.month_name[end_dt.month]}, {start_dt.year}"
+                timeline = f"Post {video_number} videos between {calendar.month_name[start_dt.month]} and {calendar.month_name[end_dt.month]}, {start_dt.year}"
+                video_description = calculate_per_month_videos(video_number)
+                
+            else:  # 超过两个月（保持兼容性）
                 english = f"{calendar.month_name[start_dt.month]} {start_dt.year} - {calendar.month_name[end_dt.month]} {end_dt.year}"
-        else:
-            # 如果end date为空，只显示开始日期
+                timeline = f"Post {video_number} video(s) from {calendar.month_name[start_dt.month]} {start_dt.year} to {calendar.month_name[end_dt.month]} {end_dt.year}"
+                video_description = f"{video_number} video(s)"
+                
+        else:  # 单月合作（无结束日期）
             english = f"{calendar.month_name[start_dt.month]} {start_dt.year}"
+            timeline = f"Post {video_number} video(s) in {english}"
+            video_description = f"{video_number} video(s)"
+            
     except Exception as e:
         print(f"Date parsing error: {e}, start: {start}, end: {end}")
         english = ""
+        timeline = ""
+        video_description = video_number
+        
     return {
-        'promotion_date': english
+        'promotion_date': english,
+        'timeline': timeline,
+        'video_description': video_description
     }
 
 def infer_chinese_date_versions(row):
@@ -589,8 +641,9 @@ def process_data(df, uploaded_template, generate_contracts, generate_summaries, 
                         'platform_username': platform_fields['platform_username'],
                         'Influencer_links': platform_fields['Influencer_links'],
                         'promotion_date': date_fields['promotion_date'],
+                        'timeline': date_fields['timeline'],
                         'video_rate': "{:.2f}".format(float(video_rate_value)) if not is_video_rate_empty else "",
-                        'video_number': row['Estimated Videos'],
+                        'video_number': date_fields['video_description'],
                         'bonus_info': bonus_info['bonus_info'],
                         'payment_method': row['Payment method'],
                         'payment_information': row['Payment Info'],
@@ -661,8 +714,9 @@ def process_form_data(form_records, uploaded_template, generate_contracts, gener
                         'platform_username': platform_fields['platform_username'],
                         'Influencer_links': platform_fields['Influencer_links'],
                         'promotion_date': date_fields['promotion_date'],
+                        'timeline': date_fields['timeline'],
                         'video_rate': "{:.2f}".format(float(video_rate_value)) if not is_video_rate_empty else "",
-                        'video_number': record['Estimated Videos'],
+                        'video_number': date_fields['video_description'],
                         'bonus_info': bonus_info['bonus_info'],
                         'payment_method': record['Payment method'],
                         'payment_information': record['Payment Info'],
