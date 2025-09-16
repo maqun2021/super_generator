@@ -174,7 +174,8 @@ def create_form_record(form_data):
         'Main Platform nickname': main_platform_nickname,
         'Statement': form_data['statement'],
         'No. of Posted Videos': form_data['actual_video_number'] or '',
-        'Payment Info': form_data['payment_info'] or ''
+        'Payment Info': form_data['payment_info'] or '',
+        'Other Platform Links': form_data['other_platform_links'] or ''
     }
     
     # 添加平台字段
@@ -246,6 +247,21 @@ if input_mode == "📝 表单填写（推荐）":
                 platforms,
                 key="main_platform_select",
                 help="选择哪个平台作为主要展示平台，其昵称将作为主平台昵称"
+            )
+        
+        # 检查是否选择了其他平台（除了TikTok和Instagram）
+        other_platforms = [p for p in platforms if p not in ['TikTok', 'Instagram']]
+        other_platform_links = ""
+        
+        if other_platforms:
+            st.markdown("#### 🔗 其他平台链接")
+            st.info(f"检测到您选择了 **{', '.join(other_platforms)}** 平台，请提供这些平台的链接")
+            
+            other_platform_links = st.text_area(
+                "Other Platform Links",
+                key="other_platform_links_input",
+                placeholder=f"请输入 {', '.join(other_platforms)} 平台的完整链接\n每行一个链接\n也可填写TikTok/Instagram自定义链接覆盖自动生成的链接",
+                help="• 必须填写您选择的其他平台链接\n• TikTok和Instagram会自动生成，但也可填写自定义链接覆盖\n• Instagram格式建议：https://www.instagram.com/用户名/reels/"
             )
         
         # 合作详情
@@ -322,7 +338,8 @@ if input_mode == "📝 表单填写（推荐）":
                         'bonus_level': bonus_level,
                         'statement': statement,
                         'actual_video_number': actual_video_number,
-                        'payment_info': payment_info
+                        'payment_info': payment_info,
+                        'other_platform_links': other_platform_links
                     })
                     st.session_state.form_records.append(record)
                     st.success(f"✅ 已添加记录：{party_b_name}")
@@ -431,13 +448,27 @@ def generate_contract_summary(row):
     except Exception as e:
         return f"生成概括时出错: {str(e)}"
 
+def detect_platform_from_link(link):
+    """从链接中检测平台类型"""
+    link = link.lower().strip()
+    if 'tiktok.com' in link:
+        return 'TT'
+    elif 'instagram.com' in link:
+        return 'IG'
+    elif 'youtube.com' in link or 'youtu.be' in link:
+        return 'YT'
+    elif 'facebook.com' in link:
+        return 'FB'
+    elif 'kwai.com' in link:
+        return 'kwai'
+    else:
+        return 'OTHER'  # 未知平台
+
 def infer_platform_fields(row):
     platform_map = {
         'TT': 'TikTok',
         'IG': 'Instagram',
-        'YT': 'YouTube',
-        'FB': 'Facebook',
-        'kwai': 'Kwai'
+        
     }
     username_map = {
         'TT': 'Tiktok Video',
@@ -446,26 +477,57 @@ def infer_platform_fields(row):
         'FB': 'Facebook Reels',
         'kwai': 'Kwai Video'
     }
-    link_map = {
+    # 自动生成链接模板（更新IG格式）
+    auto_link_map = {
         'TT': 'https://www.tiktok.com/@{}',
-        'IG': 'https://www.instagram.com/{}',
-        'YT': 'https://www.youtube.com/@{}',
-        'FB': 'https://www.facebook.com/{}',
-        'kwai': 'https://www.kwai.com/user/{}'
+        'IG': 'https://www.instagram.com/{}/reels/'  # 更新格式
     }
+    
     platforms = []
     usernames = []
-    links = []
+    platform_links = {}  # 存储每个平台的链接
+    
+    # 首先处理用户提供的链接
+    other_platform_links = str(row.get('Other Platform Links', '')).strip()
+    if other_platform_links:
+        # 解析用户提供的链接
+        user_links = [link.strip() for link in other_platform_links.split('\n') if link.strip()]
+        for link in user_links:
+            platform_code = detect_platform_from_link(link)
+            if platform_code in platform_map:
+                # 用户提供的链接优先
+                platform_links[platform_code] = link
+            else:
+                # 未知平台的链接，直接添加
+                if 'OTHER' not in platform_links:
+                    platform_links['OTHER'] = []
+                platform_links['OTHER'].append(link)
+    
+    # 处理所有平台的用户名和链接
     for key in platform_map:
         uname = str(row.get(key, '')).strip()
         if uname:
             platforms.append(platform_map[key])
             usernames.append(f"{username_map[key]} - {uname}")
-            links.append(link_map[key].format(uname))
+            
+            # 如果用户没有提供这个平台的链接，就自动生成
+            if key not in platform_links and key in auto_link_map:
+                platform_links[key] = auto_link_map[key].format(uname)
+    
+    # 收集所有链接
+    all_links = []
+    for key in ['TT', 'IG', 'YT', 'FB', 'kwai']:
+        if key in platform_links:
+            all_links.append(platform_links[key])
+    
+    # 添加其他未知平台的链接
+    if 'OTHER' in platform_links:
+        all_links.extend(platform_links['OTHER'])
+    
     return {
         'platform': ' ＆ '.join(platforms),
         'platform_username': '\n'.join(usernames),
-        'Influencer_links': '\n'.join(links)
+        'Influencer_links': '\n'.join(all_links)
     }
 
 def infer_date_versions(row):
